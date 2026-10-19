@@ -3016,8 +3016,8 @@ class _ReportHandler(http.server.SimpleHTTPRequestHandler):
         token = fields.get("token", [""])[0].encode()
         target = fields.get("path", [""])[0]
         host = (self.headers.get("Host") or "").rsplit(":", 1)[0]
-        root = Path(self.directory).resolve()
-        path = Path(target).resolve()
+        root = os.path.realpath(self.directory)
+        full_path = os.path.realpath(os.path.join(root, target))
 
         if (
             not self.token
@@ -3025,7 +3025,10 @@ class _ReportHandler(http.server.SimpleHTTPRequestHandler):
             or host not in ("127.0.0.1", "localhost")
         ):
             self._reply(403, "This request does not come from a page of this report.")
-        elif not path.is_file() or root not in path.parents:
+        # A bare root prefix would also accept a sibling such as "<root>-old".
+        elif not full_path.startswith(os.path.join(root, "")) or not os.path.isfile(
+            full_path
+        ):
             self._reply(403, f"'{target}' is not a file served by this report.")
         elif (skyline := shutil.which("dipy_skyline")) is None:
             self._reply(
@@ -3034,6 +3037,7 @@ class _ReportHandler(http.server.SimpleHTTPRequestHandler):
                 "Install it, or run the command below yourself.",
             )
         else:
+            path = Path(full_path)
             subprocess.Popen([skyline, report.skyline_argument(path=path)])
             self._reply(200, f"Skyline launched on {path.name}.")
 

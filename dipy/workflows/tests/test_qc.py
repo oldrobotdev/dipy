@@ -388,6 +388,45 @@ def test_report_server_refuses_foreign_path():
             httpd.server_close()
 
 
+def test_report_server_launches_only_files_inside_its_root():
+    with TemporaryDirectory() as tmp_dir:
+        out_dir = os.path.join(tmp_dir, "report")
+        sibling_dir = f"{out_dir}-old"
+        bin_dir = os.path.join(tmp_dir, "bin")
+        for folder in (out_dir, sibling_dir, bin_dir):
+            os.makedirs(folder)
+        volume = os.path.join(out_dir, "fa.nii.gz")
+        outside = os.path.join(sibling_dir, "fa.nii.gz")
+        for fname in (volume, outside):
+            save_nifti(fname, np.zeros((2, 2, 2), dtype=np.float32), np.eye(4))
+
+        if os.name == "nt":
+            skyline = os.path.join(bin_dir, "dipy_skyline.bat")
+            content = "@exit /b 0\n"
+        else:
+            skyline = os.path.join(bin_dir, "dipy_skyline")
+            content = "#!/bin/sh\nexit 0\n"
+        with open(skyline, "w", encoding="utf-8") as f:
+            f.write(content)
+        os.chmod(skyline, 0o755)
+
+        old_path = os.environ.get("PATH", "")
+        os.environ["PATH"] = os.pathsep.join([bin_dir, old_path])
+        httpd, base = _serve(out_dir=out_dir, token="secret")
+        try:
+            with npt.assert_raises(HTTPError) as cm:
+                _post(f"{base}/qc-open", path=outside, token="secret")
+            assert cm.exception.code == 403
+
+            reply = _post(f"{base}/qc-open", path="fa.nii.gz", token="secret")
+            assert reply.status == 200
+            assert reply.read().decode() == "Skyline launched on fa.nii.gz."
+        finally:
+            os.environ["PATH"] = old_path
+            httpd.shutdown()
+            httpd.server_close()
+
+
 def test_report_server_requires_its_token():
     with TemporaryDirectory() as out_dir:
         page = os.path.join(out_dir, "report.html")
